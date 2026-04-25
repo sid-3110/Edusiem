@@ -1,872 +1,498 @@
 """
-Edusiem Attack Simulator
-Simulate various cyber attacks to test detection rules
-Includes: Application, Network, and Firewall attacks
+EduSIEM - Attack Simulator
+pages/8_🎯_Attack_Simulator.py
+Built to match exact database schema from database/models.py
 """
 
 import streamlit as st
-from datetime import datetime
+import sqlite3
 import random
+import os
 import json
-import sys
-from pathlib import Path
+from datetime import datetime, timedelta
+import pandas as pd
 
-sys.path.append(str(Path(__file__).parent.parent))
+st.set_page_config(page_title="Attack Simulator - EduSIEM", page_icon="🎯", layout="wide")
 
-from database.models import (
-    get_database_engine, get_session,
-    Alert, DetectionRule, SimulatedAttack, User, NetworkLog, FirewallLog
-)
-
-st.set_page_config(page_title="Attack Simulator - Edusiem", page_icon="🎯", layout="wide")
-
-# Check auth - Only admin and lead can access
-if 'authenticated' not in st.session_state or not st.session_state['authenticated']:
+# ── Auth ──────────────────────────────────────
+if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
     st.error("🔒 Please login first")
     st.stop()
 
-if st.session_state['role'] not in ['admin', 'edusiem_lead']:
-    st.error("❌ Access Denied: Only Admin and Edusiem Lead can access Attack Simulator")
+username = st.session_state.get("username", "admin")
+role     = st.session_state.get("role", "")
+
+if role not in ["admin", "edusiem_lead"]:
+    st.warning("🚫 Only Admin and EduSIEM Lead can run simulations.")
     st.stop()
 
-# Header
-st.markdown("""
-    <div style="background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); padding: 2rem; border-radius: 15px; margin-bottom: 2rem;">
-        <h1 style="color: white; margin: 0;">🎯 Attack Simulator</h1>
-        <p style="color: rgba(255,255,255,0.9); margin: 0.5rem 0 0 0;">Test detection rules by simulating cyber attacks</p>
-    </div>
-""", unsafe_allow_html=True)
+# ── DB ────────────────────────────────────────
+DB_PATH = "data/edusiem.db"
 
-# Warning
-st.warning("⚠️ **Testing Environment Only** - These simulations trigger real alerts in the system for testing purposes.")
+def get_db():
+    os.makedirs("data", exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-# Get database session
-engine = get_database_engine()
-session = get_session(engine)
+def table_exists(name):
+    conn = get_db()
+    r = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+    conn.close()
+    return r is not None
 
-# =============================================================================
-# SIMULATION FUNCTIONS - APPLICATION ATTACKS
-# =============================================================================
+def get_columns(table):
+    if not table_exists(table):
+        return []
+    conn = get_db()
+    cols = [c["name"] for c in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    conn.close()
+    return cols
 
-def simulate_brute_force():
-    """Simulate brute force attack"""
-    source_ip = f"203.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}"
-    target_ip = "10.0.1.100"
-    
-    alert = Alert(
-        alert_type='brute_force',
-        title='Brute Force Attack Detected',
-        message=f'Multiple failed login attempts detected from {source_ip}',
-        severity='high',
-        status='new',
-        source='attack_simulator',
-        source_ip=source_ip,
-        target_ip=target_ip,
-        rule_id='RULE-001',
-        rule_name='Brute Force Detection',
-        evidence=json.dumps({
-            'failed_attempts': 7,
-            'time_window': '10 minutes',
-            'username_targeted': 'admin',
-            'attack_pattern': 'dictionary_attack'
-        }),
-        created_by=st.session_state['user_id']
-    )
-    
-    session.add(alert)
-    session.commit()
-    
-    sim = SimulatedAttack(
-        attack_type='brute_force',
-        attack_name='Brute Force Login Attack',
-        description='Simulated 7 failed login attempts within 10 minutes',
-        source_ip=source_ip,
-        target_ip=target_ip,
-        parameters=json.dumps({'attempts': 7}),
-        alert_generated=True,
-        alert_id=alert.id,
-        simulated_by=st.session_state['user_id'],
-        status='success'
-    )
-    
-    session.add(sim)
-    session.commit()
-    
-    return alert.id, source_ip
-
-
-def simulate_sql_injection():
-    """Simulate SQL injection attack"""
-    source_ip = f"102.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}"
-    
-    alert = Alert(
-        alert_type='sql_injection',
-        title='SQL Injection Attempt Detected',
-        message=f'SQL injection attempt detected from {source_ip}',
-        severity='critical',
-        status='new',
-        source='attack_simulator',
-        source_ip=source_ip,
-        target_ip='10.0.2.100',
-        rule_id='RULE-003',
-        rule_name='SQL Injection Detection',
-        evidence=json.dumps({
-            'payload': "' OR '1'='1' --",
-            'target_field': 'username',
-            'url': '/student/login.php'
-        }),
-        created_by=st.session_state['user_id']
-    )
-    
-    session.add(alert)
-    session.commit()
-    
-    sim = SimulatedAttack(
-        attack_type='sql_injection',
-        attack_name='SQL Injection Attack',
-        description='Simulated SQL injection in login form',
-        source_ip=source_ip,
-        alert_generated=True,
-        alert_id=alert.id,
-        simulated_by=st.session_state['user_id'],
-        status='success'
-    )
-    
-    session.add(sim)
-    session.commit()
-    
-    return alert.id, source_ip
-
-
-def simulate_malware():
-    """Simulate malware detection"""
-    alert = Alert(
-        alert_type='malware',
-        title='Malware Detected',
-        message=f'Malicious file detected on workstation',
-        severity='critical',
-        status='new',
-        source='attack_simulator',
-        source_ip='10.0.5.32',
-        rule_id='RULE-007',
-        rule_name='Malware Detection',
-        evidence=json.dumps({
-            'file_name': 'invoice_2026.exe',
-            'malware_type': 'Trojan.GenericKD',
-            'workstation': 'LAB-PC-032',
-            'detection_method': 'signature_match'
-        }),
-        created_by=st.session_state['user_id']
-    )
-    
-    session.add(alert)
-    session.commit()
-    
-    sim = SimulatedAttack(
-        attack_type='malware',
-        attack_name='Malware Detection',
-        description='Simulated Trojan detection on workstation',
-        alert_generated=True,
-        alert_id=alert.id,
-        simulated_by=st.session_state['user_id'],
-        status='success'
-    )
-    
-    session.add(sim)
-    session.commit()
-    
-    return alert.id, '10.0.5.32'
-
-
-def simulate_phishing():
-    """Simulate phishing detection"""
-    alert = Alert(
-        alert_type='phishing',
-        title='Phishing Email Detected',
-        message=f'Suspicious phishing email intercepted',
-        severity='high',
-        status='new',
-        source='attack_simulator',
-        source_ip='mail.suspicious-domain.com',
-        rule_id='RULE-009',
-        rule_name='Phishing Detection',
-        evidence=json.dumps({
-            'sender': 'admin@university-verify.com',
-            'subject': 'URGENT: Verify Your Account',
-            'suspicious_links': ['http://fake-university.com/verify'],
-            'keywords': ['urgent', 'verify', 'click here']
-        }),
-        created_by=st.session_state['user_id']
-    )
-    
-    session.add(alert)
-    session.commit()
-    
-    sim = SimulatedAttack(
-        attack_type='phishing',
-        attack_name='Phishing Email',
-        description='Simulated phishing email detection',
-        alert_generated=True,
-        alert_id=alert.id,
-        simulated_by=st.session_state['user_id'],
-        status='success'
-    )
-    
-    session.add(sim)
-    session.commit()
-    
-    return alert.id, 'mail.suspicious-domain.com'
-
-
-def simulate_privilege_escalation():
-    """Simulate privilege escalation"""
-    user = session.query(User).filter_by(role='student').first()
-    
-    alert = Alert(
-        alert_type='privilege_escalation',
-        title='Privilege Escalation Attempt Detected',
-        message=f'Unauthorized attempt to gain admin privileges',
-        severity='critical',
-        status='new',
-        source='attack_simulator',
-        source_ip='10.0.6.55',
-        user_id=user.id if user else None,
-        rule_id='RULE-008',
-        rule_name='Privilege Escalation Detection',
-        evidence=json.dumps({
-            'attempts': 4,
-            'target_privilege': 'administrator',
-            'method': 'sudo_exploit',
-            'commands_executed': ['sudo su', 'sudo -s']
-        }),
-        created_by=st.session_state['user_id']
-    )
-    
-    session.add(alert)
-    session.commit()
-    
-    sim = SimulatedAttack(
-        attack_type='privilege_escalation',
-        attack_name='Privilege Escalation',
-        description='Simulated attempt to gain admin access',
-        alert_generated=True,
-        alert_id=alert.id,
-        simulated_by=st.session_state['user_id'],
-        status='success'
-    )
-    
-    session.add(sim)
-    session.commit()
-    
-    return alert.id, '10.0.6.55'
-
-
-# =============================================================================
-# SIMULATION FUNCTIONS - NETWORK ATTACKS
-# =============================================================================
-
-def simulate_port_scan_network():
-    """Simulate network port scan with detailed network logs"""
-    source_ip = f"45.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}"
-    target_ip = "10.0.1.50"
-    
-    # Create multiple network log entries for port scan
-    scanned_ports = [21, 22, 23, 25, 80, 443, 445, 3389, 8080, 3306]
-    
-    for port in scanned_ports:
-        net_log = NetworkLog(
-            source_ip=source_ip,
-            source_port=random.randint(40000, 65000),
-            destination_ip=target_ip,
-            destination_port=port,
-            protocol='TCP',
-            bytes_sent=64,
-            bytes_received=0,
-            packets=1,
-            status='suspicious',
-            threat_level='medium',
-            connection_state='syn_sent'
+def ensure_anomaly_table():
+    conn = get_db()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS anomalies (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            detected_at     TEXT NOT NULL,
+            source_ip       TEXT,
+            anomaly_type    TEXT NOT NULL,
+            severity        TEXT NOT NULL DEFAULT 'medium',
+            z_score         REAL,
+            description     TEXT,
+            status          TEXT NOT NULL DEFAULT 'Open',
+            linked_alert_id INTEGER
         )
-        session.add(net_log)
-    
-    session.commit()
-    
-    # Create alert
-    alert = Alert(
-        alert_type='port_scan',
-        title='Network Port Scan Detected',
-        message=f'Port scanning detected from {source_ip} targeting {target_ip}',
-        severity='medium',
-        status='new',
-        source='network_monitor',
-        source_ip=source_ip,
-        target_ip=target_ip,
-        rule_id='NET-RULE-001',
-        rule_name='Port Scan Detection',
-        evidence=json.dumps({
-            'ports_scanned': scanned_ports,
-            'scan_duration': '45 seconds',
-            'scan_type': 'TCP SYN scan',
-            'total_packets': len(scanned_ports)
-        }),
-        created_by=st.session_state['user_id']
-    )
-    
-    session.add(alert)
-    session.commit()
-    
-    # Update network logs with alert_id
-    network_logs = session.query(NetworkLog).filter(
-        NetworkLog.source_ip == source_ip,
-        NetworkLog.destination_ip == target_ip
-    ).all()
-    
-    for log in network_logs:
-        log.alert_id = alert.id
-    
-    session.commit()
-    
-    sim = SimulatedAttack(
-        attack_type='network_port_scan',
-        attack_name='Network Port Scan',
-        description=f'Simulated port scan on {len(scanned_ports)} ports with network logs',
-        source_ip=source_ip,
-        target_ip=target_ip,
-        alert_generated=True,
-        alert_id=alert.id,
-        simulated_by=st.session_state['user_id'],
-        status='success'
-    )
-    
-    session.add(sim)
-    session.commit()
-    
-    return alert.id, source_ip
+    """)
+    conn.commit()
+    conn.close()
 
+def rnd_ext_ip():
+    return f"{random.randint(1,223)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(1,254)}"
 
-def simulate_ddos_network():
-    """Simulate DDoS attack with network traffic flood"""
-    target_ip = "10.0.0.1"
-    
-    # Create 100 network log entries simulating traffic flood
-    source_ips = [f"185.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}" for _ in range(50)]
-    
-    for i in range(100):
-        source_ip = random.choice(source_ips)
-        net_log = NetworkLog(
-            source_ip=source_ip,
-            source_port=random.randint(1024, 65000),
-            destination_ip=target_ip,
-            destination_port=80,
-            protocol='TCP',
-            bytes_sent=random.randint(500, 2000),
-            bytes_received=0,
-            packets=random.randint(10, 50),
-            status='suspicious',
-            threat_level='critical',
-            connection_state='syn_flood'
-        )
-        session.add(net_log)
-    
-    session.commit()
-    
-    # Create alert
-    alert = Alert(
-        alert_type='ddos',
-        title='DDoS Attack Detected',
-        message=f'DDoS attack detected targeting {target_ip} from {len(source_ips)} unique sources',
-        severity='critical',
-        status='new',
-        source='network_monitor',
-        source_ip='multiple_sources',
-        target_ip=target_ip,
-        rule_id='NET-RULE-002',
-        rule_name='DDoS Detection',
-        evidence=json.dumps({
-            'unique_sources': len(source_ips),
-            'total_connections': 100,
-            'attack_type': 'SYN_flood',
-            'target_service': 'Web Server (port 80)',
-            'packets_per_second': 15000
-        }),
-        created_by=st.session_state['user_id']
-    )
-    
-    session.add(alert)
-    session.commit()
-    
-    sim = SimulatedAttack(
-        attack_type='ddos_network',
-        attack_name='DDoS Network Attack',
-        description=f'Simulated DDoS from {len(source_ips)} sources with 100 network log entries',
-        source_ip='multiple',
-        target_ip=target_ip,
-        alert_generated=True,
-        alert_id=alert.id,
-        simulated_by=st.session_state['user_id'],
-        status='success'
-    )
-    
-    session.add(sim)
-    session.commit()
-    
-    return alert.id, 'multiple_sources'
+def rnd_int_ip():
+    return f"192.168.{random.randint(1,5)}.{random.randint(2,254)}"
 
+# ── EXACT schema from models.py ───────────────
+# alerts columns: id, alert_type, title, message, severity, status,
+#                 source, source_ip, target_ip, user_id, rule_id, rule_name,
+#                 created_by, reviewed_by, incident_id, created_at,
+#                 reviewed_at, evidence
 
-def simulate_suspicious_traffic():
-    """Simulate suspicious network traffic pattern"""
-    source_ip = f"192.168.{random.randint(1,255)}.{random.randint(1,255)}"
-    target_ip = f"8.8.{random.randint(1,255)}.{random.randint(1,255)}"
-    
-    # Create suspicious network activity - large data transfer
-    for i in range(20):
-        net_log = NetworkLog(
-            source_ip=source_ip,
-            source_port=random.randint(40000, 65000),
-            destination_ip=target_ip,
-            destination_port=443,
-            protocol='HTTPS',
-            bytes_sent=random.randint(5000000, 10000000),  # 5-10 MB per connection
-            bytes_received=random.randint(1000, 5000),
-            packets=random.randint(1000, 5000),
-            status='suspicious',
-            threat_level='high',
-            connection_state='established',
-            duration=random.randint(60, 300)
-        )
-        session.add(net_log)
-    
-    session.commit()
-    
-    # Calculate total data
-    total_mb = (20 * 7500000) / (1024 * 1024)
-    
-    # Create alert
-    alert = Alert(
-        alert_type='data_exfiltration',
-        title='Suspicious Data Transfer Detected',
-        message=f'Large data transfer detected from internal host {source_ip}',
-        severity='high',
-        status='new',
-        source='network_monitor',
-        source_ip=source_ip,
-        target_ip=target_ip,
-        rule_id='NET-RULE-003',
-        rule_name='Data Exfiltration Detection',
-        evidence=json.dumps({
-            'total_data_mb': round(total_mb, 2),
-            'connections': 20,
-            'destination': 'External IP',
-            'protocol': 'HTTPS',
-            'duration': '5 minutes'
-        }),
-        created_by=st.session_state['user_id']
-    )
-    
-    session.add(alert)
-    session.commit()
-    
-    sim = SimulatedAttack(
-        attack_type='suspicious_traffic',
-        attack_name='Suspicious Network Traffic',
-        description=f'Simulated {round(total_mb, 2)} MB data transfer with network logs',
-        source_ip=source_ip,
-        target_ip=target_ip,
-        alert_generated=True,
-        alert_id=alert.id,
-        simulated_by=st.session_state['user_id'],
-        status='success'
-    )
-    
-    session.add(sim)
-    session.commit()
-    
-    return alert.id, source_ip
+def insert_alert(alert_type, title, message, severity, source, source_ip, target_ip, rule_id, rule_name, evidence):
+    if not table_exists("alerts"):
+        st.error("❌ alerts table not found. Make sure the database is initialized.")
+        return None
+    try:
+        conn = get_db()
+        conn.execute("""
+            INSERT INTO alerts
+                (alert_type, title, message, severity, status, source,
+                 source_ip, target_ip, rule_id, rule_name, created_at, evidence)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            alert_type, title, message, severity, "new", source,
+            source_ip, target_ip, rule_id, rule_name,
+            datetime.utcnow().isoformat(), evidence
+        ))
+        conn.commit()
+        aid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.close()
+        return aid
+    except Exception as e:
+        st.error(f"❌ Alert insert error: {e}")
+        return None
 
+# network_logs columns: id, source_ip, source_port, destination_ip,
+#   destination_port, protocol, bytes_sent, bytes_received, packets,
+#   status, threat_level, user_id, connection_state, duration,
+#   timestamp, alert_id
 
-# =============================================================================
-# SIMULATION FUNCTIONS - FIREWALL ATTACKS
-# =============================================================================
+def insert_network_logs(entries):
+    if not table_exists("network_logs"):
+        return 0
+    valid = set(get_columns("network_logs")) - {"id"}
+    conn  = get_db()
+    count = 0
+    for e in entries:
+        row = {k: v for k, v in e.items() if k in valid}
+        if not row:
+            continue
+        try:
+            conn.execute(
+                f"INSERT INTO network_logs ({','.join(row)}) VALUES ({','.join(['?']*len(row))})",
+                list(row.values())
+            )
+            count += 1
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+    return count
 
-def simulate_firewall_block():
-    """Simulate firewall blocking malicious traffic"""
-    source_ip = f"103.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}"
-    target_ip = "10.0.1.100"
-    
-    # Create firewall log entries
-    blocked_attempts = []
-    threat_types = ['port_scan', 'brute_force', 'malware', 'sql_injection']
-    
-    for i in range(15):
-        threat = random.choice(threat_types)
-        fw_log = FirewallLog(
-            action='block',
-            rule_name='DENY_SUSPICIOUS_TRAFFIC',
-            rule_id='FW-RULE-001',
-            source_ip=source_ip,
-            source_port=random.randint(1024, 65000),
-            source_country='China',
-            destination_ip=target_ip,
-            destination_port=random.choice([22, 80, 443, 3389]),
-            protocol='TCP',
-            threat_type=threat,
-            severity='high',
-            packets=random.randint(1, 10)
-        )
-        session.add(fw_log)
-        blocked_attempts.append(threat)
-    
-    session.commit()
-    
-    # Create alert
-    alert = Alert(
-        alert_type='firewall_block',
-        title='Multiple Firewall Blocks Detected',
-        message=f'Firewall blocked {len(blocked_attempts)} malicious attempts from {source_ip}',
-        severity='high',
-        status='new',
-        source='firewall',
-        source_ip=source_ip,
-        target_ip=target_ip,
-        rule_id='FW-RULE-001',
-        rule_name='Suspicious Traffic Detection',
-        evidence=json.dumps({
-            'blocked_attempts': len(blocked_attempts),
-            'threat_types': list(set(blocked_attempts)),
-            'source_country': 'China',
-            'action_taken': 'All traffic blocked'
-        }),
-        created_by=st.session_state['user_id']
-    )
-    
-    session.add(alert)
-    session.commit()
-    
-    # Link firewall logs to alert
-    fw_logs = session.query(FirewallLog).filter(
-        FirewallLog.source_ip == source_ip
-    ).all()
-    
-    for log in fw_logs:
-        log.alert_id = alert.id
-    
-    session.commit()
-    
-    sim = SimulatedAttack(
-        attack_type='firewall_block',
-        attack_name='Firewall Block Event',
-        description=f'Simulated {len(blocked_attempts)} blocked attempts with firewall logs',
-        source_ip=source_ip,
-        target_ip=target_ip,
-        alert_generated=True,
-        alert_id=alert.id,
-        simulated_by=st.session_state['user_id'],
-        status='success'
-    )
-    
-    session.add(sim)
-    session.commit()
-    
-    return alert.id, source_ip
+# firewall_logs columns: id, action, rule_name, rule_id, source_ip,
+#   source_port, source_country, destination_ip, destination_port,
+#   protocol, threat_type, severity, bytes_transferred, packets,
+#   timestamp, alert_id
 
+def insert_firewall_logs(entries):
+    if not table_exists("firewall_logs"):
+        return 0
+    valid = set(get_columns("firewall_logs")) - {"id"}
+    conn  = get_db()
+    count = 0
+    for e in entries:
+        row = {k: v for k, v in e.items() if k in valid}
+        if not row:
+            continue
+        try:
+            conn.execute(
+                f"INSERT INTO firewall_logs ({','.join(row)}) VALUES ({','.join(['?']*len(row))})",
+                list(row.values())
+            )
+            count += 1
+        except Exception:
+            pass
+    conn.commit()
+    conn.close()
+    return count
 
-def simulate_intrusion_attempt():
-    """Simulate intrusion attempt blocked by firewall"""
-    source_ip = f"91.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}"
-    target_ip = "10.0.2.50"
-    
-    # Create firewall logs for intrusion attempts
-    for i in range(25):
-        fw_log = FirewallLog(
-            action='drop',
-            rule_name='INTRUSION_PREVENTION',
-            rule_id='FW-RULE-002',
-            source_ip=source_ip,
-            source_port=random.randint(1024, 65000),
-            source_country='Russia',
-            destination_ip=target_ip,
-            destination_port=random.choice([21, 22, 23, 3389, 445]),
-            protocol='TCP',
-            threat_type='intrusion_attempt',
-            severity='critical',
-            packets=random.randint(5, 20),
-            bytes_transferred=random.randint(500, 2000)
-        )
-        session.add(fw_log)
-    
-    session.commit()
-    
-    # Create alert
-    alert = Alert(
-        alert_type='intrusion',
-        title='Intrusion Attempt Blocked',
-        message=f'Multiple intrusion attempts blocked from {source_ip}',
-        severity='critical',
-        status='new',
-        source='firewall',
-        source_ip=source_ip,
-        target_ip=target_ip,
-        rule_id='FW-RULE-002',
-        rule_name='Intrusion Prevention',
-        evidence=json.dumps({
-            'attempts': 25,
-            'source_country': 'Russia',
-            'targeted_services': ['FTP', 'SSH', 'Telnet', 'RDP', 'SMB'],
-            'action_taken': 'All packets dropped'
-        }),
-        created_by=st.session_state['user_id']
-    )
-    
-    session.add(alert)
-    session.commit()
-    
-    sim = SimulatedAttack(
-        attack_type='intrusion_attempt',
-        attack_name='Intrusion Attempt',
-        description='Simulated 25 intrusion attempts with firewall logs',
-        source_ip=source_ip,
-        target_ip=target_ip,
-        alert_generated=True,
-        alert_id=alert.id,
-        simulated_by=st.session_state['user_id'],
-        status='success'
-    )
-    
-    session.add(sim)
-    session.commit()
-    
-    return alert.id, source_ip
+# simulated_attacks columns: id, attack_type, attack_name, description,
+#   source_ip, target_ip, parameters, alert_generated, alert_id,
+#   simulated_by, simulated_at, status
 
+def insert_simulated_attack(attack_type, attack_name, description, source_ip, target_ip, parameters, alert_id):
+    if not table_exists("simulated_attacks"):
+        return
+    try:
+        conn = get_db()
+        conn.execute("""
+            INSERT INTO simulated_attacks
+                (attack_type, attack_name, description, source_ip, target_ip,
+                 parameters, alert_generated, alert_id, simulated_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            attack_type, attack_name, description, source_ip, target_ip,
+            json.dumps(parameters), 1 if alert_id else 0, alert_id,
+            datetime.utcnow().isoformat(), "success" if alert_id else "failed"
+        ))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
-# =============================================================================
-# ATTACK SCENARIOS DEFINITION
-# =============================================================================
+def insert_anomaly(source_ip, anomaly_type, severity, description, z_score, alert_id):
+    ensure_anomaly_table()
+    try:
+        conn = get_db()
+        conn.execute("""
+            INSERT INTO anomalies
+                (detected_at, source_ip, anomaly_type, severity, z_score, description, status, linked_alert_id)
+            VALUES (?, ?, ?, ?, ?, ?, 'Open', ?)
+        """, (datetime.utcnow().isoformat(), source_ip, anomaly_type, severity, z_score, description, alert_id))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
 
-attack_scenarios = {
-    # Application Attacks
-    'Brute Force Attack': {
-        'icon': '🔐',
-        'description': 'Simulate multiple failed login attempts',
-        'severity': 'High',
-        'category': 'Application',
-        'function': simulate_brute_force
+# ── Attack definitions ────────────────────────
+
+ATTACKS = [
+    {
+        "id": 1, "name": "🔐 Brute Force Attack",
+        "attack_type": "brute_force", "severity": "high",
+        "rule_id": "RULE-001", "rule_name": "Brute Force Detection",
+        "source": "brute_force", "atype": "Brute Force", "z": 4.2,
+        "cat": "Authentication Attack", "mitre": "T1110",
+        "desc": "Repeated failed login attempts against SSH/web portal from external IP.",
     },
-    'SQL Injection': {
-        'icon': '💉',
-        'description': 'Simulate SQL injection attempt',
-        'severity': 'Critical',
-        'category': 'Application',
-        'function': simulate_sql_injection
+    {
+        "id": 2, "name": "💉 SQL Injection",
+        "attack_type": "sql_injection", "severity": "critical",
+        "rule_id": "RULE-003", "rule_name": "SQL Injection Detection",
+        "source": "sql_injection", "atype": "SQL Injection", "z": 5.1,
+        "cat": "Web Application Attack", "mitre": "T1190",
+        "desc": "SQL injection payloads targeting student portal database.",
     },
-    'Malware Detection': {
-        'icon': '🦠',
-        'description': 'Simulate malware on workstation',
-        'severity': 'Critical',
-        'category': 'Application',
-        'function': simulate_malware
+    {
+        "id": 3, "name": "🌊 DDoS Attack",
+        "attack_type": "ddos", "severity": "critical",
+        "rule_id": "RULE-010", "rule_name": "DDoS Detection",
+        "source": "ddos", "atype": "Traffic Volume Spike", "z": 6.8,
+        "cat": "Availability Attack", "mitre": "T1498",
+        "desc": "High-volume request flood targeting campus web servers.",
     },
-    'Phishing Email': {
-        'icon': '🎣',
-        'description': 'Simulate phishing email detection',
-        'severity': 'High',
-        'category': 'Application',
-        'function': simulate_phishing
+    {
+        "id": 4, "name": "🔍 Port Scan",
+        "attack_type": "port_scan", "severity": "medium",
+        "rule_id": "RULE-002", "rule_name": "Port Scan Detection",
+        "source": "port_scan", "atype": "Port Scan", "z": 3.5,
+        "cat": "Reconnaissance", "mitre": "T1046",
+        "desc": "Systematic port scanning across campus network subnets.",
     },
-    'Privilege Escalation': {
-        'icon': '⬆️',
-        'description': 'Simulate unauthorized admin access attempt',
-        'severity': 'Critical',
-        'category': 'Application',
-        'function': simulate_privilege_escalation
+    {
+        "id": 5, "name": "🦠 Malware C2 Beacon",
+        "attack_type": "malware", "severity": "critical",
+        "rule_id": "RULE-007", "rule_name": "Malware Detection",
+        "source": "malware", "atype": "C2 Communication", "z": 4.9,
+        "cat": "Malware", "mitre": "T1071",
+        "desc": "Malware beaconing to external command and control server.",
     },
-    
-    # Network Attacks
-    'Network Port Scan': {
-        'icon': '🔍',
-        'description': 'Simulate network-level port scanning',
-        'severity': 'Medium',
-        'category': 'Network',
-        'function': simulate_port_scan_network
+    {
+        "id": 6, "name": "🎣 Phishing Campaign",
+        "attack_type": "phishing", "severity": "high",
+        "rule_id": "RULE-009", "rule_name": "Phishing Detection",
+        "source": "phishing", "atype": "Phishing", "z": 3.1,
+        "cat": "Social Engineering", "mitre": "T1566",
+        "desc": "Credential-harvesting phishing emails sent to faculty accounts.",
     },
-    'Network DDoS': {
-        'icon': '💥',
-        'description': 'Simulate DDoS with network traffic flood',
-        'severity': 'Critical',
-        'category': 'Network',
-        'function': simulate_ddos_network
+    {
+        "id": 7, "name": "🔑 Privilege Escalation",
+        "attack_type": "privilege_escalation", "severity": "critical",
+        "rule_id": "RULE-008", "rule_name": "Privilege Escalation",
+        "source": "privilege_escalation", "atype": "Privilege Escalation", "z": 4.7,
+        "cat": "Lateral Movement", "mitre": "T1068",
+        "desc": "Student account attempting to escalate to admin privileges.",
     },
-    'Suspicious Network Traffic': {
-        'icon': '📤',
-        'description': 'Simulate large data exfiltration',
-        'severity': 'High',
-        'category': 'Network',
-        'function': simulate_suspicious_traffic
+    {
+        "id": 8, "name": "📤 Data Exfiltration",
+        "attack_type": "data_exfiltration", "severity": "critical",
+        "rule_id": "RULE-006", "rule_name": "Data Exfiltration",
+        "source": "data_exfiltration", "atype": "Data Exfiltration", "z": 5.5,
+        "cat": "Exfiltration", "mitre": "T1041",
+        "desc": "Bulk student records transferred to external IP address.",
     },
-    
-    # Firewall Attacks
-    'Firewall Block Event': {
-        'icon': '🛡️',
-        'description': 'Simulate firewall blocking malicious traffic',
-        'severity': 'High',
-        'category': 'Firewall',
-        'function': simulate_firewall_block
+    {
+        "id": 9, "name": "🔓 Unauthorized Access",
+        "attack_type": "unusual_time", "severity": "high",
+        "rule_id": "RULE-005", "rule_name": "Geographic Anomaly",
+        "source": "unauthorized_access", "atype": "Unauthorized Access", "z": 3.8,
+        "cat": "Access Control", "mitre": "T1078",
+        "desc": "Access to restricted admin panel without proper authorization.",
     },
-    'Intrusion Attempt': {
-        'icon': '⚠️',
-        'description': 'Simulate intrusion blocked by firewall',
-        'severity': 'Critical',
-        'category': 'Firewall',
-        'function': simulate_intrusion_attempt
-    }
-}
+    {
+        "id": 10, "name": "🌙 Insider Threat",
+        "attack_type": "unusual_time", "severity": "high",
+        "rule_id": "RULE-004", "rule_name": "Unusual Time Access",
+        "source": "insider_threat", "atype": "Off-Hours Activity", "z": 3.3,
+        "cat": "Insider Threat", "mitre": "T1074",
+        "desc": "Staff account bulk-downloading confidential files at 2 AM.",
+    },
+]
 
-# =============================================================================
-# UI - ATTACK SCENARIOS DISPLAY
-# =============================================================================
+# ── Log generators ────────────────────────────
 
-st.markdown("### 🚨 Available Attack Scenarios")
+def make_net_logs(atk, src, alert_id):
+    now  = datetime.utcnow()
+    base = {"source_ip": src, "alert_id": alert_id,
+            "status": "suspicious", "threat_level": atk["severity"]}
+    logs = []
 
-# Category tabs
-tab1, tab2, tab3 = st.tabs(["💻 Application Attacks", "🌐 Network Attacks", "🔥 Firewall Attacks"])
+    if atk["id"] == 1:  # Brute force
+        for i in range(20):
+            logs.append({**base,
+                "destination_ip": rnd_int_ip(), "destination_port": 22,
+                "protocol": "TCP", "bytes_sent": 512, "bytes_received": 128,
+                "packets": 3, "connection_state": "rejected",
+                "timestamp": (now - timedelta(seconds=i*15)).isoformat(),
+            })
+    elif atk["id"] == 2:  # SQL injection
+        for i in range(5):
+            logs.append({**base,
+                "destination_ip": rnd_int_ip(), "destination_port": 80,
+                "protocol": "HTTP", "bytes_sent": random.randint(200,800),
+                "bytes_received": 50, "packets": 2, "connection_state": "established",
+                "timestamp": (now - timedelta(seconds=i*10)).isoformat(),
+            })
+    elif atk["id"] == 3:  # DDoS
+        for i in range(50):
+            logs.append({**base,
+                "destination_ip": rnd_int_ip(), "destination_port": 80,
+                "protocol": "TCP", "bytes_sent": random.randint(50,200),
+                "bytes_received": 0, "packets": 1, "connection_state": "syn_sent",
+                "timestamp": (now - timedelta(seconds=i*2)).isoformat(),
+            })
+    elif atk["id"] == 4:  # Port scan
+        for port in random.sample(range(1, 9000), 25):
+            logs.append({**base,
+                "destination_ip": rnd_int_ip(), "destination_port": port,
+                "protocol": "TCP", "bytes_sent": 40, "bytes_received": 0,
+                "packets": 1, "connection_state": "syn_sent",
+                "timestamp": (now - timedelta(seconds=random.randint(0,120))).isoformat(),
+            })
+    elif atk["id"] == 8:  # Data exfil
+        logs.append({**base,
+            "destination_ip": rnd_ext_ip(), "destination_port": 443,
+            "protocol": "TCP", "bytes_sent": random.randint(5000000,50000000),
+            "bytes_received": 1024, "packets": random.randint(1000,5000),
+            "connection_state": "established", "duration": random.randint(300,1800),
+            "timestamp": now.isoformat(),
+        })
+    elif atk["id"] == 10:  # Insider / off-hours
+        off = now.replace(hour=2, minute=random.randint(0,59))
+        for i in range(15):
+            logs.append({**base,
+                "source_ip": rnd_int_ip(),
+                "destination_ip": rnd_int_ip(), "destination_port": 445,
+                "protocol": "TCP", "bytes_sent": random.randint(1000,50000),
+                "bytes_received": random.randint(500,25000),
+                "packets": random.randint(10,100), "connection_state": "established",
+                "timestamp": (off - timedelta(minutes=i*3)).isoformat(),
+            })
+    else:
+        for i in range(5):
+            logs.append({**base,
+                "destination_ip": rnd_int_ip(),
+                "destination_port": random.choice([80,443,22,3306,8080]),
+                "protocol": random.choice(["TCP","UDP","HTTP"]),
+                "bytes_sent": random.randint(100,1000),
+                "bytes_received": random.randint(50,500),
+                "packets": random.randint(2,20), "connection_state": "established",
+                "timestamp": (now - timedelta(seconds=i*10)).isoformat(),
+            })
+    return logs
 
-severity_colors = {
-    'Critical': '#dc2626',
-    'High': '#f59e0b',
-    'Medium': '#3b82f6',
-    'Low': '#10b981'
-}
 
-with tab1:
-    st.markdown("#### Application-Level Attacks")
-    app_attacks = {k: v for k, v in attack_scenarios.items() if v['category'] == 'Application'}
-    
-    col1, col2 = st.columns(2)
-    
-    for i, (attack_name, details) in enumerate(app_attacks.items()):
-        with col1 if i % 2 == 0 else col2:
-            st.markdown(f"""
-                <div style="background: #1e293b; padding: 1.5rem; border-radius: 10px; margin-bottom: 1rem; border-left: 4px solid {severity_colors[details['severity']]};">
-                    <h3 style="margin: 0; color: white;">{details['icon']} {attack_name}</h3>
-                    <p style="color: #94a3b8; margin: 0.5rem 0;">{details['description']}</p>
-                    <span style="background: {severity_colors[details['severity']]}; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.875rem; font-weight: 700;">
-                        {details['severity']} Severity
-                    </span>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            if st.button(f"🚀 Launch {attack_name}", key=f"app_{i}", use_container_width=True):
-                with st.spinner(f"Simulating {attack_name}..."):
-                    import time
-                    time.sleep(1)
-                    
-                    alert_id, source_ip = details['function']()
-                    
-                    st.success(f"✅ **{attack_name} Simulated Successfully!**")
-                    st.info(f"🚨 **Alert #{alert_id} created** from {source_ip}")
-                    st.info("👉 **Go to Alerts page** to review and create incident")
-                    
-                    with st.expander("📋 View Attack Evidence"):
-                        alert = session.query(Alert).get(alert_id)
-                        if alert and alert.evidence:
-                            evidence = json.loads(alert.evidence)
-                            for key, value in evidence.items():
-                                st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+def make_fw_logs(atk, src, alert_id):
+    now    = datetime.utcnow()
+    action = "block" if atk["severity"] in ("critical","high") else "drop"
+    return [{
+        "source_ip": src,
+        "source_port": random.randint(1024, 65535),
+        "destination_ip": rnd_int_ip(),
+        "destination_port": random.randint(1, 65535),
+        "protocol": "TCP",
+        "action": action,
+        "rule_name": atk["rule_name"],
+        "rule_id": atk["rule_id"],
+        "threat_type": atk["attack_type"],
+        "severity": atk["severity"],
+        "bytes_transferred": random.randint(100,5000),
+        "packets": random.randint(1,50),
+        "timestamp": (now - timedelta(seconds=i*5)).isoformat(),
+        "alert_id": alert_id,
+    } for i in range(4)]
 
-with tab2:
-    st.markdown("#### Network-Level Attacks")
-    net_attacks = {k: v for k, v in attack_scenarios.items() if v['category'] == 'Network'}
-    
-    col1, col2 = st.columns(2)
-    
-    for i, (attack_name, details) in enumerate(net_attacks.items()):
-        with col1 if i % 2 == 0 else col2:
-            st.markdown(f"""
-                <div style="background: #1e293b; padding: 1.5rem; border-radius: 10px; margin-bottom: 1rem; border-left: 4px solid {severity_colors[details['severity']]};">
-                    <h3 style="margin: 0; color: white;">{details['icon']} {attack_name}</h3>
-                    <p style="color: #94a3b8; margin: 0.5rem 0;">{details['description']}</p>
-                    <span style="background: {severity_colors[details['severity']]}; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.875rem; font-weight: 700;">
-                        {details['severity']} Severity
-                    </span>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            if st.button(f"🚀 Launch {attack_name}", key=f"net_{i}", use_container_width=True):
-                with st.spinner(f"Simulating {attack_name}..."):
-                    import time
-                    time.sleep(1)
-                    
-                    alert_id, source_ip = details['function']()
-                    
-                    st.success(f"✅ **{attack_name} Simulated Successfully!**")
-                    st.info(f"🚨 **Alert #{alert_id} created** from {source_ip}")
-                    st.info("👉 **Check Network Logs page** to see network traffic entries")
-                    
-                    with st.expander("📋 View Attack Evidence"):
-                        alert = session.query(Alert).get(alert_id)
-                        if alert and alert.evidence:
-                            evidence = json.loads(alert.evidence)
-                            for key, value in evidence.items():
-                                st.write(f"**{key.replace('_', ' ').title()}:** {value}")
 
-with tab3:
-    st.markdown("#### Firewall-Level Attacks")
-    fw_attacks = {k: v for k, v in attack_scenarios.items() if v['category'] == 'Firewall'}
-    
-    col1, col2 = st.columns(2)
-    
-    for i, (attack_name, details) in enumerate(fw_attacks.items()):
-        with col1 if i % 2 == 0 else col2:
-            st.markdown(f"""
-                <div style="background: #1e293b; padding: 1.5rem; border-radius: 10px; margin-bottom: 1rem; border-left: 4px solid {severity_colors[details['severity']]};">
-                    <h3 style="margin: 0; color: white;">{details['icon']} {attack_name}</h3>
-                    <p style="color: #94a3b8; margin: 0.5rem 0;">{details['description']}</p>
-                    <span style="background: {severity_colors[details['severity']]}; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.875rem; font-weight: 700;">
-                        {details['severity']} Severity
-                    </span>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            if st.button(f"🚀 Launch {attack_name}", key=f"fw_{i}", use_container_width=True):
-                with st.spinner(f"Simulating {attack_name}..."):
-                    import time
-                    time.sleep(1)
-                    
-                    alert_id, source_ip = details['function']()
-                    
-                    st.success(f"✅ **{attack_name} Simulated Successfully!**")
-                    st.info(f"🚨 **Alert #{alert_id} created** from {source_ip}")
-                    st.info("👉 **Check Firewall Logs page** to see firewall block entries")
-                    
-                    with st.expander("📋 View Attack Evidence"):
-                        alert = session.query(Alert).get(alert_id)
-                        if alert and alert.evidence:
-                            evidence = json.loads(alert.evidence)
-                            for key, value in evidence.items():
-                                st.write(f"**{key.replace('_', ' ').title()}:** {value}")
+def run_attack(atk):
+    src = rnd_ext_ip()
+    tgt = rnd_int_ip()
+    now = datetime.utcnow()
 
-st.markdown("---")
+    evidence = json.dumps({
+        "mitre_technique": atk["mitre"],
+        "category": atk["cat"],
+        "source_ip": src,
+        "target_ip": tgt,
+        "simulated_by": username,
+        "simulated_at": now.isoformat(),
+        "z_score": atk["z"],
+    })
 
-# Simulation History
-st.markdown("### 📊 Recent Simulations")
+    # 1. Create alert using exact column names from models.py
+    aid = insert_alert(
+        alert_type = atk["attack_type"],
+        title      = f"{atk['name']} Detected",
+        message    = f"{atk['desc']} | Source IP: {src} | Target IP: {tgt} | MITRE: {atk['mitre']} | Simulated by {username} at {now.strftime('%Y-%m-%d %H:%M:%S')}",
+        severity   = atk["severity"],
+        source     = atk["source"],
+        source_ip  = src,
+        target_ip  = tgt,
+        rule_id    = atk["rule_id"],
+        rule_name  = atk["rule_name"],
+        evidence   = evidence,
+    )
 
-recent_sims = session.query(SimulatedAttack).order_by(
-    SimulatedAttack.simulated_at.desc()
-).limit(15).all()
+    # 2. Network logs
+    net_n = insert_network_logs(make_net_logs(atk, src, aid))
 
-if recent_sims:
-    for sim in recent_sims:
-        col1, col2, col3 = st.columns([2, 2, 1])
-        
-        with col1:
-            st.write(f"**{sim.attack_name}**")
-        
-        with col2:
-            st.caption(f"Simulated {sim.simulated_at.strftime('%B %d, %Y at %I:%M %p')}")
-        
-        with col3:
-            if sim.alert_generated:
-                st.success("✅ Alert Created")
-else:
-    st.info("No simulations run yet. Click an attack scenario above to begin testing!")
+    # 3. Firewall logs
+    fw_n = insert_firewall_logs(make_fw_logs(atk, src, aid))
 
-session.close()
+    # 4. Simulated attack record
+    insert_simulated_attack(
+        attack_type  = atk["attack_type"],
+        attack_name  = atk["name"],
+        description  = atk["desc"],
+        source_ip    = src,
+        target_ip    = tgt,
+        parameters   = {"mitre": atk["mitre"], "z_score": atk["z"]},
+        alert_id     = aid,
+    )
+
+    # 5. Anomaly record
+    insert_anomaly(src, atk["atype"], atk["severity"],
+        f"[SIM] {atk['name']}: {atk['desc']} from {src} → {tgt}", atk["z"], aid)
+
+    return {"aid": aid, "src": src, "tgt": tgt, "net": net_n, "fw": fw_n}
+
+
+# ── UI ────────────────────────────────────────
+
+st.title("🎯 Attack Simulator")
+st.caption("Each simulated attack writes correlated data to: alerts · network_logs · firewall_logs · simulated_attacks · anomalies")
+
+st.info("💡 After launching an attack, check **🏠 Dashboard**, **🚨 Alerts**, **🧠 Anomaly Detection**, and **🔎 Log Search** to see all correlated data.")
+
+st.divider()
+st.subheader("Select an Attack Scenario")
+
+for i in range(0, len(ATTACKS), 2):
+    pair = ATTACKS[i:i+2]
+    c1, c2 = st.columns(2)
+    for col, atk in zip([c1, c2], pair):
+        with col:
+            with st.container(border=True):
+                icon = {"critical":"🔴","high":"🟠","medium":"🟡","low":"🟢"}.get(atk["severity"],"⚪")
+                st.markdown(f"### {atk['name']}")
+                st.caption(f"{icon} **{atk['severity'].title()}** &nbsp;|&nbsp; `{atk['mitre']}` &nbsp;|&nbsp; {atk['cat']}")
+                st.write(atk["desc"])
+                btype = "primary" if atk["severity"] == "critical" else "secondary"
+                if st.button("▶ Launch", key=f"atk_{atk['id']}", use_container_width=True, type=btype):
+                    with st.spinner(f"Simulating {atk['name']}..."):
+                        res = run_attack(atk)
+                    if res["aid"]:
+                        st.success("✅ Attack simulated! Written to database:")
+                        r1, r2 = st.columns(2)
+                        r1.metric("Alert ID",      f"#{res['aid']}")
+                        r2.metric("Source IP",     res["src"])
+                        r1.metric("Network Logs",  res["net"])
+                        r2.metric("Firewall Logs", res["fw"])
+                        st.caption(f"🧠 Anomaly injected · 📋 SimRecord saved · Target: {res['tgt']}")
+                    else:
+                        st.error("Attack simulation failed — check the error above.")
+
+st.divider()
+st.subheader("📋 Recent Alerts")
+
+try:
+    if table_exists("alerts"):
+        conn = get_db()
+        rows = conn.execute("""
+            SELECT id, title, alert_type, severity, status, source_ip, created_at
+            FROM alerts ORDER BY created_at DESC LIMIT 12
+        """).fetchall()
+        conn.close()
+        if rows:
+            st.dataframe([dict(r) for r in rows], use_container_width=True, hide_index=True)
+        else:
+            st.info("No alerts yet — launch a simulation above.")
+    else:
+        st.warning("alerts table not found.")
+except Exception as e:
+    st.warning(f"Could not load alerts: {e}")
+
+with st.expander("📐 Correlation Map — what each simulation creates"):
+    st.code("""
+▶ Launch button clicked
+  │
+  ├─ alerts table          ← title, message, severity, source_ip, rule_name ...
+  ├─ network_logs table    ← source_ip, destination_ip, protocol, bytes_sent ...
+  ├─ firewall_logs table   ← action, threat_type, severity, rule_name ...
+  ├─ simulated_attacks     ← attack_type, parameters, alert_id ...
+  └─ anomalies table       ← anomaly_type, z_score, linked_alert_id ...
+
+All records share the same source_ip and alert_id as correlation keys.
+Dashboard, Alerts, Network Logs, Firewall Logs, Anomaly Detection
+and Log Search all query these same tables — so everything is in sync.
+    """)

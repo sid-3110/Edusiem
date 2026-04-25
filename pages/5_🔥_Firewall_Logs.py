@@ -114,9 +114,9 @@ firewall_logs = query.limit(100).all()
 # Charts
 if total_events > 0:
     st.markdown("### 📊 Firewall Analytics")
-    
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
         # Actions over time
         now = datetime.now()
@@ -125,25 +125,25 @@ if total_events > 0:
             'Blocked': [],
             'Allowed': []
         }
-        
+
         for i in range(24, 0, -1):
             hour_start = now - timedelta(hours=i)
-            hour_end = now - timedelta(hours=i-1)
-            
+            hour_end = now - timedelta(hours=i - 1)
+
             blocked_count = session.query(FirewallLog).filter(
                 FirewallLog.timestamp.between(hour_start, hour_end),
                 FirewallLog.action == 'block'
             ).count()
-            
+
             allowed_count = session.query(FirewallLog).filter(
                 FirewallLog.timestamp.between(hour_start, hour_end),
                 FirewallLog.action == 'allow'
             ).count()
-            
+
             hours_data['Hour'].append(hour_start.strftime('%H:%M'))
             hours_data['Blocked'].append(blocked_count)
             hours_data['Allowed'].append(allowed_count)
-        
+
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=hours_data['Hour'],
@@ -161,7 +161,7 @@ if total_events > 0:
             fill='tozeroy',
             fillcolor='rgba(16, 185, 129, 0.2)'
         ))
-        
+
         fig.update_layout(
             title='📈 Firewall Actions (Last 24 Hours)',
             paper_bgcolor='rgba(0,0,0,0)',
@@ -172,7 +172,7 @@ if total_events > 0:
             yaxis={'gridcolor': 'rgba(148, 163, 184, 0.1)'}
         )
         st.plotly_chart(fig, use_container_width=True)
-    
+
     with col2:
         # Threat types distribution
         threat_counts = {}
@@ -180,13 +180,13 @@ if total_events > 0:
             if log.threat_type:
                 threat_type = log.threat_type.replace('_', ' ').title()
                 threat_counts[threat_type] = threat_counts.get(threat_type, 0) + 1
-        
+
         if threat_counts:
             df_threats = pd.DataFrame(
                 list(threat_counts.items()),
                 columns=['Threat Type', 'Count']
             )
-            
+
             fig = px.bar(
                 df_threats,
                 x='Count',
@@ -214,7 +214,7 @@ if not firewall_logs:
     st.info("📭 No firewall logs found. Run firewall attack simulations to generate logs.")
 else:
     st.write(f"**Showing {len(firewall_logs)} most recent events**")
-    
+
     for log in firewall_logs:
         action_colors = {
             'block': '#ef4444',
@@ -222,62 +222,72 @@ else:
             'drop': '#f59e0b',
             'reject': '#dc2626'
         }
-        
+
         severity_colors = {
             'critical': '#dc2626',
             'high': '#f59e0b',
             'medium': '#3b82f6',
             'low': '#10b981'
         }
-        
+
+        # --- FIX: guard against None values ---
+        action_val = (log.action or 'unknown').lower()
+        severity_val = (log.severity or 'unknown').lower()
+        source_ip = log.source_ip or 'N/A'
+        dest_ip = log.destination_ip or 'N/A'
+        ts_str = log.timestamp.strftime('%I:%M %p') if log.timestamp else 'N/A'
+
         with st.expander(
-            f"**{log.action.upper()}** - {log.source_ip} → {log.destination_ip} - {log.timestamp.strftime('%I:%M %p')}",
+            f"**{action_val.upper()}** - {source_ip} → {dest_ip} - {ts_str}",
             expanded=False
         ):
             col1, col2, col3 = st.columns(3)
-            
+
             with col1:
+                action_color = action_colors.get(action_val, '#64748b')
                 st.markdown(f"""
-                    **Action:** <span style="background: {action_colors.get(log.action, '#64748b')}; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-weight: 700;">{log.action.upper()}</span>  
+                    **Action:** <span style="background: {action_color}; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-weight: 700;">{action_val.upper()}</span>  
                     **Rule:** {log.rule_name or 'N/A'}  
                     **Rule ID:** {log.rule_id or 'N/A'}  
                     **Protocol:** {log.protocol or 'Unknown'}
                 """, unsafe_allow_html=True)
-            
+
             with col2:
                 st.markdown("**Source:**")
-                st.write(f"IP: {log.source_ip}")
+                st.write(f"IP: {source_ip}")
                 st.write(f"Port: {log.source_port or 'N/A'}")
                 if log.source_country:
                     st.write(f"Country: {log.source_country} 🌍")
-            
+
             with col3:
                 st.markdown("**Destination:**")
-                st.write(f"IP: {log.destination_ip}")
+                st.write(f"IP: {dest_ip}")
                 st.write(f"Port: {log.destination_port or 'N/A'}")
-                
+
                 if log.threat_type:
                     st.write(f"**Threat:** {log.threat_type.replace('_', ' ').title()}")
-            
+
             # Additional details
             st.markdown("---")
-            
+
             col_a, col_b = st.columns(2)
-            
+
             with col_a:
+                severity_color = severity_colors.get(severity_val, '#64748b')
                 st.markdown(f"""
-                    **Severity:** <span style="background: {severity_colors.get(log.severity, '#64748b')}; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-weight: 700;">{log.severity.upper()}</span>
+                    **Severity:** <span style="background: {severity_color}; color: white; padding: 0.25rem 0.75rem; border-radius: 12px; font-weight: 700;">{severity_val.upper()}</span>
                 """, unsafe_allow_html=True)
-                
-                st.write(f"**Time:** {log.timestamp.strftime('%B %d, %Y at %I:%M %p')}")
-            
+
+                ts_full = log.timestamp.strftime('%B %d, %Y at %I:%M %p') if log.timestamp else 'N/A'
+                st.write(f"**Time:** {ts_full}")
+
             with col_b:
                 if log.packets:
                     st.write(f"**Packets:** {log.packets}")
                 if log.bytes_transferred:
                     bytes_kb = log.bytes_transferred / 1024
                     st.write(f"**Data:** {bytes_kb:.2f} KB")
-            
+
             # Check if this log is linked to an alert
             if log.alert_id:
                 st.markdown("---")
@@ -285,8 +295,9 @@ else:
                 if alert:
                     st.warning(f"⚠️ **This event triggered Alert #{alert.id}**")
                     st.write(f"**Alert:** {alert.title}")
-                    st.write(f"**Severity:** {alert.severity.upper()}")
-                    
+                    alert_severity = (alert.severity or 'unknown').upper()
+                    st.write(f"**Severity:** {alert_severity}")
+
                     if st.button("View Alert Details", key=f"view_alert_{log.id}"):
                         st.info("👉 Go to Alerts page to review this alert")
 
@@ -298,14 +309,15 @@ col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("#### Most Blocked Sources")
-    
+
     # Count blocked IPs
     blocked_ips = {}
     for log in session.query(FirewallLog).filter(FirewallLog.action == 'block').all():
-        blocked_ips[log.source_ip] = blocked_ips.get(log.source_ip, 0) + 1
-    
+        ip = log.source_ip or 'Unknown'
+        blocked_ips[ip] = blocked_ips.get(ip, 0) + 1
+
     top_blocked = sorted(blocked_ips.items(), key=lambda x: x[1], reverse=True)[:5]
-    
+
     if top_blocked:
         for ip, count in top_blocked:
             # Get country if available
@@ -313,5 +325,17 @@ with col1:
                 FirewallLog.source_ip == ip,
                 FirewallLog.source_country != None
             ).first()
-            
+
             country = f" ({country_log.source_country})" if country_log and country_log.source_country else ""
+
+            st.markdown(f"""
+                <div style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3);
+                     border-radius: 8px; padding: 0.75rem; margin-bottom: 0.5rem;
+                     display: flex; justify-content: space-between; align-items: center;">
+                    <span>🚫 <strong>{ip}</strong>{country}</span>
+                    <span style="background: #ef4444; color: white; padding: 0.25rem 0.75rem;
+                         border-radius: 12px; font-weight: 700;">{count} blocks</span>
+                </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("No blocked IPs recorded yet.")
